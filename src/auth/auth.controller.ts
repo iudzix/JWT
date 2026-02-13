@@ -2,7 +2,11 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthDto } from './dto/auth.dto';
-import { AuthGuard } from '@nestjs/passport';
+//import { AuthGuard } from '@nestjs/passport'; 
+import { AccessTokenGuard } from './guards/access-token.guard';
+import { RefreshTokenGuard } from './guards/refresh-token.guard';
+import { Throttle } from '@nestjs/throttler';
+
 
 @Controller('auth')
 export class AuthController {
@@ -13,14 +17,30 @@ export class AuthController {
         return this.authService.signUp(dto);
     }
 
+    // จำกัดการยิง signin เพื่อลด brute force (การเดารหัสผ่าน)
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Post('signin')
     signin(@Body() dto: AuthDto) {
         return this.authService.signIn(dto);
     }
 
-    @UseGuards(AuthGuard('jwt')) // ใช้ JWT Auth Guard เพื่อป้องกันเส้นทางนี้
+    @UseGuards(AccessTokenGuard) // ป้องกันด้วย Access Token
     @Get('profile')
     getProfile(@Req() req: any) {
         return req.user;
     }
+
+    @UseGuards(RefreshTokenGuard) // ป้องกันด้วย Refresh Token
+    @Post('refresh')
+    refresh(@Req() req: any) {
+        const { sub: userId, email, role, refreshToken } = req.user;
+        return this.authService.refreshTokens(userId, email, role, refreshToken);
+    }
+
+    @UseGuards(AccessTokenGuard)
+    @Post('logout')
+    logout(@Req() req: any) {
+        return this.authService.logout(req.user.userId);
+    }
+
 }

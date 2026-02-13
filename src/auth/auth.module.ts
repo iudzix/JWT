@@ -8,12 +8,14 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { RefreshStrategy } from './strategies/refresh.strategy'; // นำเข้า RefreshStrategy
 
 @Module({
   imports: [
     UsersModule,
     PassportModule,
-    JwtModule.registerAsync({
+    JwtModule.register({}),
+    /*JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (config: ConfigService) => ({
@@ -22,9 +24,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
           expiresIn: parseInt(config.get<string>('JWT_EXPIRATION') ?? '3600', 10),// 1 hour จาก config ที่อยู่ใน .env เพื่อกำหนดเวลา หมดอายุของโทเคน
         },
       }),
-    }),
+    }),*/
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, RefreshStrategy], // เพิ่ม RefreshStrategy ใน providers
 })
 export class AuthModule { }

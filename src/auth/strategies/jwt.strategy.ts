@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 
  
 
-type JwtPayload = { sub: string; email: string }; 
+type JwtPayload = { sub: string; email: string; role: string  }; // เพิ่ม role ใน payload
 
  
 
@@ -25,7 +25,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
             ignoreExpiration: false, //ถ้า Token หมดอายุ จะโดน 401 ทันที
 
-            secretOrKey: config.get<string>('JWT_SECRET') || '', //จุดนี้ต้องตรงกับตอนสร้าง Token
+            secretOrKey: config.get<string>('JWT_ACCESS_SECRET') || '', //จุดนี้ต้องตรงกับตอนสร้าง Token
 
         }); 
 
@@ -35,7 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     validate(payload: JwtPayload) { 
 
-        return { userId: payload.sub, email: payload.email }; 
+        return { userId: payload.sub, email: payload.email, role: payload.role  }; // เพิ่ม role ในข้อมูลที่ส่งกลับ
 
     } 
 

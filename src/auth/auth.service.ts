@@ -1,6 +1,6 @@
 // src/auth/auth.service.ts 
 
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common'; 
+import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common'; 
 
 import { UsersService } from '../users/users.service'; 
 
@@ -9,6 +9,8 @@ import { JwtService } from '@nestjs/jwt';
 import { AuthDto } from './dto/auth.dto'; 
 
 import * as argon2 from 'argon2'; 
+
+import { ConfigService } from '@nestjs/config'; 
 
  
 
@@ -22,6 +24,8 @@ export class AuthService {
 
         private jwtService: JwtService, 
 
+        private config: ConfigService,
+
     ) { } 
 
  
@@ -31,6 +35,29 @@ export class AuthService {
         return email.trim().toLowerCase(); // ตัดช่องว่างและแปลงเป็นตัวพิมพ์เล็ก
 
     } 
+
+    private async signTokens(user: { id: string; email: string; role: string }) {
+        const accessSecret = this.config.getOrThrow<string>('JWT_ACCESS_SECRET');
+        const refreshSecret = this.config.getOrThrow<string>('JWT_REFRESH_SECRET');
+
+        const accessExp = parseInt(this.config.get<string>('JWT_ACCESS_EXPIRATION') ?? '900', 10);
+        const refreshExp = parseInt(this.config.get<string>('JWT_REFRESH_EXPIRATION') ?? '604800', 10);
+
+        const payload = { sub: user.id, email: user.email, role: user.role };
+
+        const [access_token, refresh_token] = await Promise.all([
+            this.jwtService.signAsync(payload, { secret: accessSecret, expiresIn: accessExp }),
+            this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExp }),
+        ]);
+
+        return { access_token, refresh_token };
+    }
+
+    private async storeRefreshHash(userId: string, refreshToken: string) {
+        const hash = await argon2.hash(refreshToken);
+        await this.usersService.setRefreshTokenHash(userId, hash);
+    }
+
 
  
 
@@ -54,11 +81,14 @@ export class AuthService {
 
             passwordHash, 
 
+            role: 'user'
+
         });       // สร้างผู้ใช้ใหม่ในฐานข้อมูล
+        const tokens = await this.signTokens({ id: String(newUser._id), email: newUser.email, role: newUser.role });
+        await this.storeRefreshHash(String(newUser._id), tokens.refresh_token);
 
- 
-
-        return this.signToken(String(newUser._id), newUser.email); // สร้างโทเคนขึ้นมา 1 ตัว 
+        /*return this.signToken(String(newUser._id), newUser.email);*/ // สร้างโทเคนขึ้นมา 1 ตัว 
+        return tokens;
 
     } 
 
@@ -70,7 +100,7 @@ export class AuthService {
 
  
 
-        const user = await this.usersService.findByEmailWithPassword(email); // ค้นหาผู้ใช้ตามอีเมลพร้อมรหัสผ่านที่แฮชแล้ว
+        const user = await this.usersService.findByEmailWithSecrets(email); // ค้นหาผู้ใช้โดยดึง passwordHash ด้วย
 
         if (!user) throw new UnauthorizedException('อีเมลไม่ถูกต้อง'); // ถ้าไม่พบผู้ใช้ ให้ขว้างข้อผิดพลาด
 
@@ -79,16 +109,17 @@ export class AuthService {
         const passwordMatches = await argon2.verify(user.passwordHash, dto.password); // ตรวจสอบว่ารหัสผ่านตรงกันหรือไม่
 
         if (!passwordMatches) throw new UnauthorizedException('รหัสผ่านไม่ถูกต้อง'); // ถ้ารหัสผ่านไม่ตรงกัน ให้ขว้างข้อผิดพลาด
+        const tokens = await this.signTokens({ id: String(user._id), email: user.email, role: user.role });
+        await this.storeRefreshHash(String(user._id), tokens.refresh_token);
 
- 
-
-        return this.signToken(String(user._id), user.email); // สร้างโทเคนขึ้นมา 1 ตัว
+        /*return this.signToken(String(user._id), user.email);*/ // สร้างโทเคนขึ้นมา 1 ตัว
+        return tokens;
 
     } 
 
  
 
-    async signToken(userId: string, email: string) { 
+    /*async signToken(userId: string, email: string) { 
 
         const payload = { sub: userId, email }; 
 
@@ -102,6 +133,29 @@ export class AuthService {
 
         }; 
 
-    } 
+    } */
+
+        async refreshTokens(userId: string, email: string, role: string, refreshToken: string) {
+        if (!refreshToken) throw new ForbiddenException('Access denied');
+
+        const user = await this.usersService.findByIdWithRefresh(userId);
+        if (!user?.refreshTokenHash) throw new ForbiddenException('Access denied');
+
+        const matches = await argon2.verify(user.refreshTokenHash, refreshToken);
+        if (!matches) throw new ForbiddenException('Access denied');
+
+        const tokens = await this.signTokens({ id: userId, email, role });
+
+        // Rotation: refresh token ใหม่ต้องถูกเก็บ hash ใหม่ทับตัวเก่า
+        await this.storeRefreshHash(userId, tokens.refresh_token);
+
+        return tokens;
+    }
+
+    async logout(userId: string) {
+        await this.usersService.setRefreshTokenHash(userId, null);
+        return { success: true };
+    }
+
 
 } 
